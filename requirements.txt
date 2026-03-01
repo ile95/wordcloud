@@ -3,4 +3,4 @@ gunicorn
 wordcloud
 pillow
 matplotlib
-qrcode
+qrcode[pil]
