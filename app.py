@@ -7,35 +7,34 @@ import re
 import sqlite3
 import threading
 import time
-from dataclasses import dataclass
 from queue import Queue
-from typing import Optional
 
 from flask import Flask, Response, jsonify, redirect, render_template_string, request, send_file, abort
-import matplotlib
 
+import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+
 from wordcloud import WordCloud
 import qrcode
 
 
 # =======================
-# 환경설정 (배포 전제)
+# 환경설정
 # =======================
-APP_HOST = os.getenv("APP_HOST", "0.0.0.0")
-APP_PORT = int(os.getenv("PORT", os.getenv("APP_PORT", "5000")))
+APP_HOST = "0.0.0.0"
+APP_PORT = int(os.getenv("PORT", "5000"))
 
-# 배포 후 공개 주소(HTTPS 권장). 예: https://your-app.onrender.com
-BASE_URL = os.getenv("BASE_URL", "").rstrip("/")
-
-# 교사 전용 화면 접근 토큰(꼭 설정하세요!)
-TEACHER_TOKEN = os.getenv("TEACHER_TOKEN", "change-me")
-
-#DB_PATH = os.getenv("DB_PATH", "responses.db")
+# Render 무료 플랜에서 쓰기 가능한 안전 경로: /tmp
+# (주의: 서버 재시작 시 DB 초기화될 수 있음)
 DB_PATH = os.getenv("DB_PATH", "/tmp/responses.db")
 
-# 간단 불용어(원하시면 확장)
+BASE_URL = os.getenv("BASE_URL", "").rstrip("/")  # 예: https://xxxxx.onrender.com
+TEACHER_TOKEN = os.getenv("TEACHER_TOKEN", "change-me")
+
+# 한글 폰트(필요하면 사용): 프로젝트 폴더에 ttf 넣고 환경변수로 파일명 지정
+FONT_PATH = os.getenv("WC_FONT_PATH", "")  # 예: "NanumGothic.ttf"
+
 KOREAN_STOPWORDS = {
     "그리고", "근데", "그래서", "하지만", "또는", "저는", "제가", "그냥",
     "진짜", "너무", "조금", "정말", "같아요", "합니다", "하는", "에서", "으로",
@@ -43,9 +42,6 @@ KOREAN_STOPWORDS = {
     "한", "하다", "되다", "있다", "없다",
 }
 
-# 한글 워드클라우드 폰트(배포 리눅스 환경이면 폰트 설치/동봉이 가장 안전)
-# 프로젝트 폴더에 NanumGothic.ttf 같은 파일을 넣고 아래처럼 지정하면 확실합니다.
-FONT_PATH = os.getenv("WC_FONT_PATH", "")  # 예: "NanumGothic.ttf" 또는 "/usr/share/....ttf"
 
 app = Flask(__name__)
 
@@ -55,13 +51,21 @@ SUB_LOCK = threading.Lock()
 
 
 # =======================
-# DB
+# DB (중요: 연결할 때마다 테이블 보장 + timeout)
 # =======================
 def db_conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=10)
     conn.row_factory = sqlite3.Row
 
-    # ✅ 핵심: 연결할 때마다 테이블을 항상 보장
+    # 락 완화(가능한 경우)
+    try:
+        conn.execute("PRAGMA journal_mode=WAL;")
+        conn.execute("PRAGMA synchronous=NORMAL;")
+        conn.execute("PRAGMA busy_timeout=10000;")  # ms
+    except Exception:
+        pass
+
+    # ✅ 핵심: 어떤 요청이 먼저 와도 테이블 항상 보장
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS responses (
@@ -75,30 +79,10 @@ def db_conn() -> sqlite3.Connection:
     return conn
 
 
-def init_db() -> None:
-    conn = db_conn()
-    try:
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS responses (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                text TEXT NOT NULL,
-                created_at REAL NOT NULL
-            )
-            """
-        )
-        conn.commit()
-    finally:
-        conn.close()
-
-
 def add_response(text: str) -> None:
     conn = db_conn()
     try:
-        conn.execute(
-            "INSERT INTO responses(text, created_at) VALUES (?, ?)",
-            (text, time.time()),
-        )
+        conn.execute("INSERT INTO responses(text, created_at) VALUES (?, ?)", (text, time.time()))
         conn.commit()
     finally:
         conn.close()
@@ -136,7 +120,6 @@ def get_count() -> int:
 # =======================
 def normalize_text(s: str) -> str:
     s = str(s or "").strip()
-    # 너무 공격적인 정규화는 피하고, 특수문자만 공백 처리
     s = re.sub(r"[^\w\s가-힣]", " ", s)
     s = re.sub(r"\s+", " ", s).strip()
     return s
@@ -153,6 +136,27 @@ def publish_update() -> None:
         for q in dead:
             if q in SUBSCRIBERS:
                 SUBSCRIBERS.remove(q)
+
+
+def require_teacher(token: str) -> None:
+    if token != TEACHER_TOKEN:
+        abort(403)
+
+
+def student_url() -> str:
+    # 배포에서는 BASE_URL을 반드시 넣는 걸 권장
+    if BASE_URL:
+        return f"{BASE_URL}/s"
+    # 로컬 테스트용
+    return f"http://localhost:{APP_PORT}/s"
+
+
+def make_qr_png(data: str) -> io.BytesIO:
+    img = qrcode.make(data)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    buf.seek(0)
+    return buf
 
 
 def tokenize_for_korean_wc(text: str) -> str:
@@ -174,16 +178,15 @@ def build_wordcloud_png() -> io.BytesIO:
     wc_text = tokenize_for_korean_wc(text_all)
 
     font_path = FONT_PATH if FONT_PATH else None
-
     wc = WordCloud(
-        width=1400,
-        height=800,
+        width=1600,
+        height=900,
         background_color="white",
         font_path=font_path,
         collocations=False,
     ).generate(wc_text)
 
-    fig = plt.figure(figsize=(14, 8))
+    fig = plt.figure(figsize=(16, 9))
     plt.imshow(wc, interpolation="bilinear")
     plt.axis("off")
 
@@ -195,30 +198,8 @@ def build_wordcloud_png() -> io.BytesIO:
     return buf
 
 
-def require_teacher(token: str) -> None:
-    if token != TEACHER_TOKEN:
-        abort(403)
-
-
-def student_url() -> str:
-    # 배포 환경에서 BASE_URL이 반드시 필요
-    if not BASE_URL:
-        # 로컬 테스트 편의(배포 전에는 BASE_URL 세팅 권장)
-        return f"http://localhost:{APP_PORT}/s"
-    return f"{BASE_URL}/s"
-
-
-def make_qr_png(data: str) -> io.BytesIO:
-    img = qrcode.make(data)
-    buf = io.BytesIO()
-    img.save(buf, format="PNG")
-    buf.seek(0)
-    return buf
-
-#init_db()
-
 # =======================
-# HTML (A형: 학생/교사 분리)
+# HTML: 학생/교사 분리(A형)
 # =======================
 STUDENT_HTML = """
 <!doctype html>
@@ -263,6 +244,8 @@ STUDENT_HTML = """
       $("text").value = "";
       $("ok").style.display = "block";
       setTimeout(()=>{$("ok").style.display="none";}, 1500);
+    } else {
+      alert("제출 실패! 다시 시도해 주세요.");
     }
   }
 
@@ -313,7 +296,7 @@ TEACHER_HTML = """
 
     <div class="card">
       <div class="big">학생 접속 QR</div>
-      <div class="hint">학생들은 와이파이 없이 LTE/5G로 접속해도 됩니다(공개 URL 배포 필요).</div>
+      <div class="hint">학생들은 LTE/5G로 접속 가능(공개 URL 배포 필요)</div>
       <img class="qr" src="/api/qr.png?token={{token}}" alt="qr"/>
       <div class="hint" style="margin-top:8px;">
         학생용 주소: <span class="pill" id="surl"></span>
@@ -371,7 +354,6 @@ TEACHER_HTML = """
 # =======================
 @app.get("/")
 def root():
-    # 학생 페이지로 유도
     return redirect("/s")
 
 
@@ -438,7 +420,7 @@ def api_stream():
         with SUB_LOCK:
             SUBSCRIBERS.append(q)
 
-        # 연결 직후 1회 전송
+        # 연결 직후 1회
         yield f"data: {json.dumps({'type':'update','ts':time.time()})}\n\n"
 
         try:
@@ -456,9 +438,4 @@ def api_stream():
 
 
 if __name__ == "__main__":
-    #init_db()
     app.run(host=APP_HOST, port=APP_PORT, debug=False, threaded=True)
-
-
-
-
