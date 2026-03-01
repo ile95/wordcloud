@@ -1,0 +1,6 @@
+flask
+gunicorn
+wordcloud
+pillow
+matplotlib
+qrcode
