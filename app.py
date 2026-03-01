@@ -32,7 +32,8 @@ BASE_URL = os.getenv("BASE_URL", "").rstrip("/")
 # 교사 전용 화면 접근 토큰(꼭 설정하세요!)
 TEACHER_TOKEN = os.getenv("TEACHER_TOKEN", "change-me")
 
-DB_PATH = os.getenv("DB_PATH", "responses.db")
+#DB_PATH = os.getenv("DB_PATH", "responses.db")
+DB_PATH = os.getenv("DB_PATH", "/tmp/responses.db")
 
 # 간단 불용어(원하시면 확장)
 KOREAN_STOPWORDS = {
@@ -445,4 +446,5 @@ def api_stream():
 if __name__ == "__main__":
     #init_db()
     app.run(host=APP_HOST, port=APP_PORT, debug=False, threaded=True)
+
 
