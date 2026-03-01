@@ -60,6 +60,18 @@ SUB_LOCK = threading.Lock()
 def db_conn() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     conn.row_factory = sqlite3.Row
+
+    # ✅ 핵심: 연결할 때마다 테이블을 항상 보장
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS responses (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            text TEXT NOT NULL,
+            created_at REAL NOT NULL
+        )
+        """
+    )
+    conn.commit()
     return conn
 
 
@@ -203,7 +215,7 @@ def make_qr_png(data: str) -> io.BytesIO:
     buf.seek(0)
     return buf
 
-init_db()
+#init_db()
 
 # =======================
 # HTML (A형: 학생/교사 분리)
@@ -446,6 +458,7 @@ def api_stream():
 if __name__ == "__main__":
     #init_db()
     app.run(host=APP_HOST, port=APP_PORT, debug=False, threaded=True)
+
 
 
 
