@@ -11,10 +11,6 @@ from queue import Queue
 
 from flask import Flask, Response, jsonify, redirect, render_template_string, request, send_file, abort
 
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-
 from wordcloud import WordCloud
 import qrcode
 
@@ -176,7 +172,7 @@ def tokenize_for_korean_wc(text: str) -> str:
 '''
 
 def build_wordcloud_png() -> io.BytesIO:
-    # 응답 전체를 텍스트로 합치지 말고, "응답 한 줄"을 그대로 구절로 사용
+    # "응답 한 줄 = 하나의 구절"로 워드클라우드 생성
     conn = db_conn()
     try:
         rows = conn.execute("SELECT text FROM responses ORDER BY id ASC").fetchall()
@@ -184,34 +180,26 @@ def build_wordcloud_png() -> io.BytesIO:
     finally:
         conn.close()
 
-    # 데이터가 없을 때 대비
     if not phrases:
         phrases = ["파이썬 코딩", "생각", "느낌"]
 
-    # 같은 문장이 여러 번 나오면 더 크게 보이도록 빈도 계산
     freq = Counter(phrases)
 
     font_path = FONT_PATH if FONT_PATH else None
-
     wc = WordCloud(
         width=1600,
         height=900,
         background_color="white",
         font_path=font_path,
-        # collocations=False는 구절 빈도 방식에는 크게 의미 없지만 유지해도 OK
-        collocations=False,
         prefer_horizontal=0.9,
         max_words=120,
+        collocations=False,
     ).generate_from_frequencies(freq)
 
-    fig = plt.figure(figsize=(16, 9))
-    plt.imshow(wc, interpolation="bilinear")
-    plt.axis("off")
-
+    # ✅ matplotlib 없이 PIL로 바로 PNG 생성
+    img = wc.to_image()  # PIL.Image
     buf = io.BytesIO()
-    plt.tight_layout(pad=0)
-    fig.savefig(buf, format="png", dpi=160)
-    plt.close(fig)
+    img.save(buf, format="PNG")
     buf.seek(0)
     return buf
 
@@ -457,5 +445,6 @@ def api_stream():
 
 if __name__ == "__main__":
     app.run(host=APP_HOST, port=APP_PORT, debug=False, threaded=True)
+
 
 
