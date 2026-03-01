@@ -47,6 +47,7 @@ KOREAN_STOPWORDS = {
 FONT_PATH = os.getenv("WC_FONT_PATH", "")  # 예: "NanumGothic.ttf" 또는 "/usr/share/....ttf"
 
 app = Flask(__name__)
+init_db()
 
 # SSE 구독자 큐
 SUBSCRIBERS: list[Queue] = []
@@ -442,5 +443,6 @@ def api_stream():
 
 
 if __name__ == "__main__":
-    init_db()
+    #init_db()
     app.run(host=APP_HOST, port=APP_PORT, debug=False, threaded=True)
+
