@@ -33,7 +33,7 @@ BASE_URL = os.getenv("BASE_URL", "").rstrip("/")  # 예: https://xxxxx.onrender.
 TEACHER_TOKEN = os.getenv("TEACHER_TOKEN", "change-me")
 
 # 한글 폰트(필요하면 사용): 프로젝트 폴더에 ttf 넣고 환경변수로 파일명 지정
-FONT_PATH = os.getenv("WC_FONT_PATH", "")  # 예: "NanumGothic.ttf"
+FONT_PATH = os.getenv("WC_FONT_PATH", "NanumGothic.ttf")  # 예: "NanumGothic.ttf"
 
 KOREAN_STOPWORDS = {
     "그리고", "근데", "그래서", "하지만", "또는", "저는", "제가", "그냥",
@@ -439,3 +439,4 @@ def api_stream():
 
 if __name__ == "__main__":
     app.run(host=APP_HOST, port=APP_PORT, debug=False, threaded=True)
+
